@@ -172,7 +172,7 @@ def main() -> None:
                 continue
 
         # 投稿
-        result = poster.post(tweet_text, row.get("投稿タイプ", "daily"), image_path=image_path)
+        result = poster.post(tweet_text, row.get("投稿タイプ", "daily"), image_path=image_path, no=no)
         if "tweet_id" in result and not result.get("error"):
             img_note = " (画像付き)" if image_path else ""
             print(f"→ 投稿完了{img_note}: {result.get('url', '')}")

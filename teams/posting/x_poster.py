@@ -14,7 +14,7 @@ from shared.logger import get_logger
 logger = get_logger("posting")
 
 POSTED_LOG = Path(__file__).parent.parent.parent / "content" / "posted" / "posted_log.csv"
-LOG_HEADERS = ["date", "time", "type", "text", "tweet_id", "url", "image_path"]
+LOG_HEADERS = ["no", "date", "time", "type", "text", "tweet_id", "url", "image_path"]
 
 
 def _init_log():
@@ -60,6 +60,7 @@ class XPoster:
         post_type: str = "daily",
         image_path: Path | None = None,
         dry_run: bool = False,
+        no: str = "",
     ) -> dict:
         """1件投稿してログに記録。画像があれば添付。dry_run=Trueなら投稿しない"""
         now = datetime.now()
@@ -81,15 +82,16 @@ class XPoster:
             url = f"https://x.com/i/web/status/{tweet_id}"
             img_str = str(image_path) if image_path else ""
             logger.info(f"投稿完了: {url}{' (画像付き)' if media_ids else ''}")
-            self._log(now, post_type, text, tweet_id, url, img_str)
+            self._log(no, now, post_type, text, tweet_id, url, img_str)
             return {"tweet_id": tweet_id, "url": url, "text": text, "image": img_str}
         except tweepy.TweepyException as e:
             logger.error(f"投稿失敗: {e}")
             return {"error": str(e), "text": text}
 
-    def _log(self, dt: datetime, post_type: str, text: str, tweet_id: str, url: str, img_path: str = ""):
+    def _log(self, no: str, dt: datetime, post_type: str, text: str, tweet_id: str, url: str, img_path: str = ""):
         with open(POSTED_LOG, "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([
+                no,
                 dt.strftime("%Y-%m-%d"),
                 dt.strftime("%H:%M:%S"),
                 post_type,
