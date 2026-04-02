@@ -3,7 +3,7 @@
 __pycache__/
 *.pyc
 .DS_Store
-/content/
+/content/drafts/posts_80_backup_*.csv
 /research/
 *.log
 credentials.json
