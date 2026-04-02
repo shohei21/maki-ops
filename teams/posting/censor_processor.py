@@ -125,13 +125,13 @@ def _apply_stamp(overlay: Image.Image, stamp_type: str, cx: int, cy: int, r: int
         _draw_text_heart(draw, cx, cy, r)
 
 
-def _detect_mouth(img_rgb: np.ndarray) -> tuple[int, int, int]:
-    """顔検出して口元座標を返す。失敗時は画像中央下部をフォールバック。"""
+def _detect_mouth(img_rgb: np.ndarray) -> tuple[int, int, int] | None:
+    """顔検出して口元座標を返す。顔が見つからない場合はNoneを返す。"""
     gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
     h, w = gray.shape
     faces = _FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
     if len(faces) == 0:
-        return w//2, int(h*0.65), w//6
+        return None
     fx, fy, fw, fh = max(faces, key=lambda r: r[2]*r[3])
     cx = fx + fw//2
     cy = fy + int(fh * 0.81)
@@ -146,26 +146,38 @@ class CensorProcessor:
         self.gemini = genai.Client(api_key=gemini_api_key)
         CENSORED_DIR.mkdir(parents=True, exist_ok=True)
 
-    def apply_stamp(self, src_path: Path, stamp_type: str | None = None) -> Path:
-        """生成画像にスタンプを貼ってcensored版を返す"""
-        chosen = stamp_type or random.choice(STAMP_TYPES)
+    def apply_stamp(self, src_path: Path, stamp_type: str | None = None) -> tuple[Path, bool]:
+        """
+        生成画像にスタンプを貼ってcensored版を返す。
+        顔が検出されなかった場合はスタンプなしで (censored_path, False) を返す。
+        """
         img = Image.open(src_path).convert("RGBA")
         img_rgb = np.array(img.convert("RGB"))
-        cx, cy, radius = _detect_mouth(img_rgb)
+        mouth = _detect_mouth(img_rgb)
 
+        out_path = CENSORED_DIR / src_path.name
+
+        if mouth is None:
+            # 顔が見つからない = シルエット・後ろ姿など → 口元なし、スタンプ不要
+            img.convert("RGB").save(out_path, quality=95)
+            logger.info(f"顔検出なし（スタンプ不要）: {out_path.name}")
+            return out_path, False
+
+        cx, cy, radius = mouth
+        chosen = stamp_type or random.choice(STAMP_TYPES)
         overlay = Image.new("RGBA", img.size, (0,0,0,0))
         _apply_stamp(overlay, chosen, cx, cy, radius)
         overlay = overlay.filter(ImageFilter.GaussianBlur(radius=0.8))
 
         out = Image.alpha_composite(img, overlay).convert("RGB")
-        out_path = CENSORED_DIR / src_path.name
         out.save(out_path, quality=95)
         logger.info(f"スタンプ適用({chosen}): {out_path.name}")
-        return out_path
+        return out_path, True
 
     def verify_mouth_hidden(self, censored_path: Path) -> tuple[bool, str]:
         """
         Gemini Visionで口元が隠れているか確認。
+        シルエット・後ろ姿など口元が写っていない場合もOK。
         戻り値: (ok: bool, reason: str)
         """
         try:
@@ -175,11 +187,13 @@ class CensorProcessor:
                 contents=[
                     img,
                     "この画像を確認してください。\n"
-                    "口元（唇・歯・口）が何らかのスタンプや装飾で完全に隠れているかどうかを判定してください。\n"
+                    "以下のいずれかを判定してください:\n"
+                    "1. 口元（唇・歯・口）がスタンプや装飾で完全に隠れている → OK\n"
+                    "2. 画像にそもそも口元が写っていない（シルエット・後ろ姿・腕のみ・遠景など） → OK\n"
+                    "3. 口元が写っていて、かつ隠れていない → NG\n"
                     "以下の形式でのみ回答してください:\n"
-                    "OK: 口元が完全に隠れている\n"
-                    "NG: 口元が見えている、または隠れ方が不十分\n"
-                    "理由: （1文で）"
+                    "OK: （理由を1文で）\n"
+                    "NG: （理由を1文で）"
                 ],
             )
             text = response.text.strip()
@@ -197,15 +211,19 @@ class CensorProcessor:
         """
         tried_stamps: list[str] = []
         for attempt in range(1, max_retries + 1):
-            # 前回と違うスタンプを選ぶ
             remaining = [s for s in STAMP_TYPES if s not in tried_stamps]
             chosen = stamp_type if (attempt == 1 and stamp_type) else (random.choice(remaining) if remaining else random.choice(STAMP_TYPES))
             tried_stamps.append(chosen)
 
             logger.info(f"スタンプ処理 試行{attempt}/{max_retries} ({chosen})")
-            censored_path = self.apply_stamp(generated_path, stamp_type=chosen)
-            ok, reason = self.verify_mouth_hidden(censored_path)
+            censored_path, stamp_applied = self.apply_stamp(generated_path, stamp_type=chosen)
 
+            # 顔が検出されなかった場合はそのままOK（シルエット・後ろ姿など）
+            if not stamp_applied:
+                logger.info(f"顔なし画像のためスタンプ不要、そのまま使用: {censored_path.name}")
+                return censored_path
+
+            ok, reason = self.verify_mouth_hidden(censored_path)
             if ok:
                 logger.info(f"口元隠し確認OK: {censored_path.name}")
                 return censored_path
