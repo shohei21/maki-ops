@@ -160,15 +160,16 @@ def main() -> None:
             print("→ [DRY-RUN] 投稿しません")
             continue
 
-        # 画像生成
+        # 画像生成 → スタンプ → 口元確認
         image_path = None
         if image_gen and image_prompt:
             label = f"post_{no.zfill(3)}"
-            image_path = image_gen.generate(image_prompt, label=label)
+            image_path = image_gen.generate_and_censor(image_prompt, label=label)
             if image_path:
-                print(f"→ 画像生成完了: {image_path.name}")
+                print(f"→ 画像生成・加工完了(censored): {image_path.name}")
             else:
-                print("→ 画像生成失敗（テキストのみで投稿します）")
+                print("→ 口元隠し確認失敗。この投稿はスキップします")
+                continue
 
         # 投稿
         result = poster.post(tweet_text, row.get("投稿タイプ", "daily"), image_path=image_path)

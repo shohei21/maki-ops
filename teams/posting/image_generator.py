@@ -12,6 +12,7 @@ from google import genai
 from google.genai import types
 
 from shared.logger import get_logger
+from teams.posting.censor_processor import CensorProcessor
 
 logger = get_logger("image_gen")
 
@@ -30,6 +31,7 @@ CHARACTER_BASE = (
 
 class ImageGenerator:
     def __init__(self, api_key: str, use_reference: bool = True):
+        self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
         self.ref_image: Image.Image | None = None
         if use_reference and REFERENCE_IMAGE.exists():
@@ -38,7 +40,7 @@ class ImageGenerator:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     def generate(self, prompt: str, label: str = "post") -> Path | None:
-        """プロンプトから画像を生成してPathを返す。失敗時はNone。"""
+        """プロンプトから画像を生成してassets/generated/に保存。Pathを返す。失敗時はNone。"""
         full_prompt = f"{CHARACTER_BASE}, {prompt}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = OUTPUT_DIR / f"{label}_{timestamp}.png"
@@ -69,3 +71,18 @@ class ImageGenerator:
         except Exception as e:
             logger.error(f"画像生成エラー: {e}")
             return None
+
+    def generate_and_censor(self, prompt: str, label: str = "post") -> Path | None:
+        """
+        画像生成 → スタンプ適用 → Geminiで口元隠し確認 → censored版を返す。
+        口元が隠れていない場合は最大3回リトライ。全失敗時はNone。
+        """
+        # Step 1: 画像生成
+        generated = self.generate(prompt, label)
+        if not generated:
+            return None
+
+        # Step 2: censor処理 + 検証
+        censor = CensorProcessor(gemini_api_key=self.api_key)
+        censored = censor.process(generated)
+        return censored
