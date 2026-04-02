@@ -9,7 +9,8 @@ monthly-100k-opsのビジネス設計 × ai-account-opsのSNS自動化 を統合
 |--------|------|-----------|
 | Team A | ビジョン：月10万ロードマップ・note設計 → Notion | `run_vision.py` |
 | Team B | コンテンツ：今日の投稿文3本生成（まきキャラ維持） | `run_content.py` |
-| Team C | 投稿：X自動投稿・ログ記録 | `run_post.py` |
+| Team B+ | 一括生成：80本+画像プロンプト+CSVスケジュール | `run_bulk_content.py` |
+| Team C | 投稿：X自動投稿・ログ記録 | `run_post.py` / `run_auto_post.py` |
 | Team D | リサーチ：Xバズ収集・トレンドヒント生成 | `run_research.py` |
 | 全自動 | 毎日の運用を1コマンドで実行 | `run_pipeline.py` |
 
@@ -43,13 +44,30 @@ python scripts/run_pipeline.py --dry-run
 python scripts/run_pipeline.py --no-research
 ```
 
+## 80本一括生成 & 自動投稿（メイン運用）
+
+```bash
+# Step 1: 80本+スケジュール+画像プロンプトを一括生成（初回のみ or 月1回）
+python scripts/run_bulk_content.py
+
+# Step 2: 内容確認
+python scripts/run_auto_post.py --list      # 未投稿一覧
+python scripts/run_auto_post.py --dry-run   # 今の時刻に投稿予定のものを確認
+
+# Step 3: 自動投稿（cronで定期実行）
+python scripts/run_auto_post.py             # 予定時刻のものだけ投稿
+python scripts/run_auto_post.py --force 1  # No.1を今すぐ投稿
+
+# cron設定（毎時00分・30分に自動実行）:
+# 0,30 * * * * cd /home/shomar/projects/maki-ops && .venv/bin/python scripts/run_auto_post.py >> logs/auto_post.log 2>&1
+```
+
 ## 個別実行
 
 ```bash
-python scripts/run_research.py   # Step1: トレンド収集のみ
-python scripts/run_content.py    # Step2: 投稿文生成のみ
-python scripts/run_post.py --dry-run  # Step3: 投稿確認のみ
-python scripts/run_post.py       # Step3: 実際に投稿
+python scripts/run_research.py   # トレンド収集のみ
+python scripts/run_content.py    # 今日の投稿文3本生成（毎日の追加用）
+python scripts/run_post.py --dry-run  # 生成した投稿を手動確認・投稿
 ```
 
 ## Notion構成
