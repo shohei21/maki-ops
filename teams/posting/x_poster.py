@@ -14,7 +14,7 @@ from shared.logger import get_logger
 logger = get_logger("posting")
 
 POSTED_LOG = Path(__file__).parent.parent.parent / "content" / "posted" / "posted_log.csv"
-LOG_HEADERS = ["date", "time", "type", "text", "tweet_id", "url"]
+LOG_HEADERS = ["date", "time", "type", "text", "tweet_id", "url", "image_path"]
 
 
 def _init_log():
@@ -32,41 +32,62 @@ class XPoster:
         access_token: str,
         access_token_secret: str,
     ):
+        # v2 API（テキスト投稿 + media_id指定）
         self.client = tweepy.Client(
             consumer_key=api_key,
             consumer_secret=api_secret,
             access_token=access_token,
             access_token_secret=access_token_secret,
         )
+        # v1.1 API（画像アップロード用）
+        auth = tweepy.OAuth1UserHandler(api_key, api_secret, access_token, access_token_secret)
+        self.api_v1 = tweepy.API(auth)
         _init_log()
 
-    def post(self, text: str, post_type: str = "daily", dry_run: bool = False) -> dict:
-        """1件投稿してログに記録。dry_run=Trueなら実際には投稿しない"""
+    def upload_image(self, image_path: Path) -> str | None:
+        """画像をXにアップロードしてmedia_idを返す"""
+        try:
+            media = self.api_v1.media_upload(filename=str(image_path))
+            logger.info(f"画像アップロード完了: media_id={media.media_id_string}")
+            return media.media_id_string
+        except Exception as e:
+            logger.error(f"画像アップロード失敗: {e}")
+            return None
+
+    def post(
+        self,
+        text: str,
+        post_type: str = "daily",
+        image_path: Path | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """1件投稿してログに記録。画像があれば添付。dry_run=Trueなら投稿しない"""
         now = datetime.now()
         if dry_run:
-            logger.info(f"[DRY-RUN] 投稿スキップ: {text[:50]}...")
+            img_info = f" + 画像({image_path.name})" if image_path else ""
+            logger.info(f"[DRY-RUN] 投稿スキップ{img_info}: {text[:50]}...")
             return {"tweet_id": "dry_run", "url": "", "text": text}
 
+        # 画像アップロード
+        media_ids = None
+        if image_path and image_path.exists():
+            media_id = self.upload_image(image_path)
+            if media_id:
+                media_ids = [media_id]
+
         try:
-            resp = self.client.create_tweet(text=text)
+            resp = self.client.create_tweet(text=text, media_ids=media_ids)
             tweet_id = resp.data["id"]
             url = f"https://x.com/i/web/status/{tweet_id}"
-            logger.info(f"投稿完了: {url}")
-            self._log(now, post_type, text, tweet_id, url)
-            return {"tweet_id": tweet_id, "url": url, "text": text}
+            img_str = str(image_path) if image_path else ""
+            logger.info(f"投稿完了: {url}{' (画像付き)' if media_ids else ''}")
+            self._log(now, post_type, text, tweet_id, url, img_str)
+            return {"tweet_id": tweet_id, "url": url, "text": text, "image": img_str}
         except tweepy.TweepyException as e:
             logger.error(f"投稿失敗: {e}")
             return {"error": str(e), "text": text}
 
-    def post_scheduled(self, posts: list[dict], dry_run: bool = False) -> list[dict]:
-        """投稿リストを順番に投稿（間隔なし・呼び出し元でスケジューリング）"""
-        results = []
-        for p in posts:
-            result = self.post(p.get("text", ""), p.get("type", "daily"), dry_run=dry_run)
-            results.append(result)
-        return results
-
-    def _log(self, dt: datetime, post_type: str, text: str, tweet_id: str, url: str):
+    def _log(self, dt: datetime, post_type: str, text: str, tweet_id: str, url: str, img_path: str = ""):
         with open(POSTED_LOG, "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow([
                 dt.strftime("%Y-%m-%d"),
@@ -75,6 +96,7 @@ class XPoster:
                 text.replace("\n", " "),
                 tweet_id,
                 url,
+                img_path,
             ])
 
     def get_recent_posts(self, days: int = 7) -> list[dict]:

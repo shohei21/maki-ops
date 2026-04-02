@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-X 自動投稿スクリプト
-posts_80.csv を読み込み、予定時刻になったら自動でXに投稿する。
-cronで定期実行（例: 毎時30分）することで完全自動化。
+X 自動投稿スクリプト（画像生成 → アップロード → 投稿）
+posts_80.csv を読み込み、予定時刻になったら:
+  1. 英語プロンプトからGeminiで画像を自動生成
+  2. 生成した画像をXにアップロード
+  3. 本文 + ハッシュタグ + 画像をセットでXに投稿
+
+cronで定期実行することで完全自動化。
 
 使い方:
     # 予定時刻になった投稿を実行（cronで定期実行）
     python scripts/run_auto_post.py
 
-    # 内容確認のみ（投稿しない）
+    # 内容確認のみ（投稿しない・画像生成もしない）
     python scripts/run_auto_post.py --dry-run
 
     # 指定番号を今すぐ強制投稿
@@ -16,6 +20,9 @@ cronで定期実行（例: 毎時30分）することで完全自動化。
 
     # 未投稿の全件を確認
     python scripts/run_auto_post.py --list
+
+    # 画像なしでテキストのみ投稿（画像生成をスキップ）
+    python scripts/run_auto_post.py --no-image
 
 cron設定例（毎時00分・30分に実行）:
     0,30 * * * * cd /home/shomar/projects/maki-ops && .venv/bin/python scripts/run_auto_post.py >> logs/auto_post.log 2>&1
@@ -77,9 +84,10 @@ def load_posts() -> list[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true", help="投稿せず確認のみ")
+    parser.add_argument("--dry-run", action="store_true", help="投稿せず確認のみ（画像生成もスキップ）")
     parser.add_argument("--force", type=str, default=None, help="指定番号を今すぐ投稿")
     parser.add_argument("--list", action="store_true", help="未投稿一覧を表示")
+    parser.add_argument("--no-image", action="store_true", help="画像生成をスキップしてテキストのみ投稿")
     args = parser.parse_args()
 
     load_env()
@@ -110,6 +118,15 @@ def main() -> None:
         access_token_secret=require_env("X_ACCESS_TOKEN_SECRET"),
     )
 
+    # 画像生成器（--no-imageでなければ初期化）
+    image_gen = None
+    if not args.no_image and not args.dry_run:
+        try:
+            from teams.posting.image_generator import ImageGenerator
+            image_gen = ImageGenerator(api_key=require_env("GOOGLE_API_KEY"))
+        except Exception as e:
+            logger.warning(f"画像生成器の初期化失敗（テキストのみで投稿します）: {e}")
+
     posted_count = 0
     for row in rows:
         no = row["No."]
@@ -132,19 +149,32 @@ def main() -> None:
                 continue
 
         tweet_text = build_tweet(row)
+        image_prompt = row.get("画像プロンプト(英語)", "").strip()
 
         print(f"\n[No.{no}] {row['日付']} {row['時間']} ({row.get('投稿タイプ', '')})")
         print(f"投稿文:\n{tweet_text}")
-        if row.get("画像プロンプト(英語)"):
-            print(f"📸 画像: {row['画像プロンプト(英語)'][:60]}...")
+        if image_prompt:
+            print(f"📸 画像プロンプト: {image_prompt[:70]}...")
 
         if args.dry_run:
             print("→ [DRY-RUN] 投稿しません")
             continue
 
-        result = poster.post(tweet_text, row.get("投稿タイプ", "daily"))
+        # 画像生成
+        image_path = None
+        if image_gen and image_prompt:
+            label = f"post_{no.zfill(3)}"
+            image_path = image_gen.generate(image_prompt, label=label)
+            if image_path:
+                print(f"→ 画像生成完了: {image_path.name}")
+            else:
+                print("→ 画像生成失敗（テキストのみで投稿します）")
+
+        # 投稿
+        result = poster.post(tweet_text, row.get("投稿タイプ", "daily"), image_path=image_path)
         if "tweet_id" in result and not result.get("error"):
-            print(f"→ 投稿完了: {result.get('url', '')}")
+            img_note = " (画像付き)" if image_path else ""
+            print(f"→ 投稿完了{img_note}: {result.get('url', '')}")
             posted_count += 1
         elif "error" in result:
             print(f"→ エラー: {result['error']}")
