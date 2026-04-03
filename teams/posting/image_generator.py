@@ -22,10 +22,9 @@ MODEL = "gemini-3.1-flash-image-preview"
 
 # まきキャラクターの固定プロンプト（顔を映さない・一貫性を保つ）
 CHARACTER_BASE = (
-    "same Japanese woman, below neck only, no face, no head, no hair visible, "
-    "hands or arms or legs or back or shoulders only, "
-    "natural beauty, photorealistic photography, "
-    "hyperdetailed, ultra realistic"
+    "same Japanese woman in her 20s, natural beauty, realistic face, "
+    "selfie-style photo, slight downward angle as if holding phone, "
+    "photorealistic photography, hyperdetailed, ultra realistic"
 )
 
 
